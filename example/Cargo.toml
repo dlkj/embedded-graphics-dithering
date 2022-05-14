@@ -1,0 +1,43 @@
+[package]
+authors = ["DLKJ"]
+edition = "2021"
+name = "example"
+version = "0.1.0"
+license = "MIT"
+
+# makes `cargo check --all-targets` work
+[[bin]]
+name = "example"
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+dithering = { path = "../dithering" }
+embedded-hal = { version = "0.2", features=["unproven"] }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+rp2040-boot2 = { version = "0.2" }
+adafruit-macropad = { version = "0.2" }
+panic-persist = { version = "0.3", features = ["utf8"] }
+embedded-time = "0.12"
+sh1106 = "0.4"
+embedded-graphics = "0.7"
+embedded-text = { version = "0.5", default-features = false }
+heapless = { version = "0.7"}
+atomic-polyfill = "0.1"
+
+# cargo build/run
+[profile.dev]
+codegen-units = 1
+debug = 2
+debug-assertions = true
+incremental = false
+#NB USB may fail to init on windows if otp-level is not set
+opt-level = 3
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1 # better optimizations
+debug = true # symbols are nice and they don't increase the size on Flash
+lto = true # better optimizations

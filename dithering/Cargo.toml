@@ -1,0 +1,10 @@
+[package]
+authors = ["DLKJ"]
+edition = "2021"
+name = "dithering"
+version = "0.1.0"
+
+[dependencies]
+embedded-hal = {version = "0.2.6", features = ["unproven"] }
+
+[dev-dependencies]
