@@ -26,6 +26,7 @@ embedded-graphics = "0.7"
 embedded-text = { version = "0.5", default-features = false }
 heapless = { version = "0.7"}
 atomic-polyfill = "0.1"
+rand = { version = "0.8", default-features = false, features = ["small_rng"] }
 
 # cargo build/run
 [profile.dev]

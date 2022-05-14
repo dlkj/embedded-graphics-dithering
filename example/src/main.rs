@@ -20,6 +20,8 @@ use embedded_time::fixed_point::FixedPoint;
 use embedded_time::rate::Hertz;
 use embedded_time::Clock;
 use panic_persist as _;
+use rand::prelude::SmallRng;
+use rand::{RngCore, SeedableRng};
 use sh1106::prelude::*;
 
 use crate::time::TimerClock;
@@ -116,8 +118,49 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
+    let mut rng = SmallRng::seed_from_u64(12345);
+
+    let mut rnd = [0u8; 1024];
+    for i in 0..rnd.len() {
+        rnd[i] = u8::try_from(rng.next_u32() & 0xF).unwrap();
+    }
+
+    let mut f = 0;
+    let mut r = rng.next_u32();
+
     loop {
         let _now = clock.try_now().unwrap();
+        //display.clear();
+
+        for y in 0..64 {
+            for x in 0..128 {
+                if x % 8 == 0 {
+                    r = rng.next_u32();
+                }
+
+                display.set_pixel(
+                    x,
+                    y,
+                    if x == f {
+                        0
+                    } else {
+                        value(x / 16, u8::try_from(r >> x % 8 * 4 & 0x7).unwrap())
+                    },
+                );
+            }
+        }
+
+        display.flush().unwrap();
+        f = (f + 1) % 128;
+    }
+}
+
+fn value(x: u32, rng: u8) -> u8 {
+    // u8::try_from(x % 2).unwrap()
+    if x + u32::from(rng) < 8 {
+        0
+    } else {
+        1
     }
 }
 
