@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::convert::Infallible;
 
+use crate::dithering_adaptor::DitheringAdaptor;
 use adafruit_macropad::{
     hal::{
         self as hal,
@@ -15,19 +16,23 @@ use adafruit_macropad::{
 use cortex_m::interrupt::Mutex;
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::{entry, exception};
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::DrawTarget;
+use embedded_graphics::{
+    mono_font::{ascii::FONT_6X9, MonoTextStyleBuilder},
+    pixelcolor::Gray8,
+    prelude::*,
+    primitives::{Circle, PrimitiveStyle, Rectangle},
+    text::Text,
+};
 use embedded_hal::digital::v2::{InputPin, OutputPin, ToggleableOutputPin};
 use embedded_time::fixed_point::FixedPoint;
 use embedded_time::rate::Hertz;
-use embedded_time::Clock;
 use panic_persist as _;
-use rand::prelude::SmallRng;
-use rand::{RngCore, SeedableRng};
 use sh1106::prelude::*;
 
-use crate::time::TimerClock;
-
+mod dithering_adaptor;
 mod panic_display;
-mod time;
 
 pub const XOSC_CRYSTAL_FREQ: Hertz = Hertz(12_000_000);
 
@@ -81,7 +86,7 @@ fn main() -> ! {
     let oled_spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
-        Hertz::new(16_000_000u32),
+        Hertz::new(133_000_000u32),
         &embedded_hal::spi::MODE_0,
     );
 
@@ -95,12 +100,7 @@ fn main() -> ! {
         //NB never returns
         panic_display::display_and_reboot(msg, display, &pins.button.into_pull_up_input());
     }
-    static mut CLOCK: Option<TimerClock> = None;
-    //Safety: interrupts not enabled yet
-    let clock = unsafe {
-        CLOCK = Some(TimerClock::new(hal::Timer::new(pac.TIMER, &mut pac.RESETS)));
-        CLOCK.as_ref().unwrap()
-    };
+    let timer = hal::Timer::new(pac.TIMER, &mut pac.RESETS);
 
     cortex_m::interrupt::free(|cs| {
         SYSTICK_STATE
@@ -108,9 +108,8 @@ fn main() -> ! {
             .set(Some(pins.led.into_push_pull_output()))
     });
 
-    //100 mico seconds
-    // let reload_value = (clocks.system_clock.freq() / 10_000).integer() - 1;
-    let reload_value = 1_000 - 1;
+    //2Hz
+    let reload_value = 500_000 - 1;
     core.SYST.set_reload(reload_value);
     core.SYST.clear_current();
     //External clock, driven by the Watchdog - 1 tick per us
@@ -118,50 +117,116 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    let mut rng = SmallRng::seed_from_u64(12345);
+    //let mut rng = SmallRng::seed_from_u64(12345);
+    const FRAME_TIME: u64 = 20_010;
 
-    let mut rnd = [0u8; 1024];
-    for i in 0..rnd.len() {
-        rnd[i] = u8::try_from(rng.next_u32() & 0xF).unwrap();
-    }
+    //full frame
+    //21 down
+    //20 down v.slow
+    //19_950 down v.slow
+    //19_930 down (sometimes up)
+    //19_925 up
+    //19_900 up
+    //19_750 up
+    //19 up
 
-    let mut f = 0;
-    let mut r = rng.next_u32();
+    //line draw
+
+    //20_100 - 1 down fast
+    //20_020 - 1 down very slow
+    //20_019 - down very slow
+    //20_017 - down very slow
+    //20_016 - down very very slow
+    //20_010 - 1 up slow
+    //20_000 - 1 up slow
+    //19_950 - 1 up
+    //19_930 - 1 up
+
+    let p1 = pins.key1.into_pull_up_input();
+    let p2 = pins.key2.into_pull_up_input();
+
+    let mut next = timer.get_counter() + FRAME_TIME + 18_000;
+
+    let mut display = DitheringAdaptor { display, frame: 0 };
 
     loop {
-        let _now = clock.try_now().unwrap();
-        //display.clear();
-
-        for y in 0..64 {
-            for x in 0..128 {
-                if x % 8 == 0 {
-                    r = rng.next_u32();
-                }
-
-                display.set_pixel(
-                    x,
-                    y,
-                    if x == f {
-                        0
-                    } else {
-                        value(x / 16, u8::try_from(r >> x % 8 * 4 & 0x7).unwrap())
-                    },
-                );
-            }
+        display.clear();
+        if timer.get_counter() < next {
+            continue;
         }
 
+        draw(&mut display);
+
         display.flush().unwrap();
-        f = (f + 1) % 128;
+
+        if p1.is_low().unwrap() {
+            next -= 10;
+        }
+        if p2.is_low().unwrap() {
+            next += 10;
+        }
     }
 }
 
-fn value(x: u32, rng: u8) -> u8 {
-    // u8::try_from(x % 2).unwrap()
-    if x + u32::from(rng) < 8 {
-        0
-    } else {
-        1
-    }
+fn draw<D>(display: &mut DitheringAdaptor<D, Infallible>)
+where
+    D: DrawTarget<Color = BinaryColor, Error = Infallible>,
+{
+    let shape_fill = Gray8::new(64);
+    let text = Gray8::new(224);
+    let background = Gray8::new(32);
+
+    Circle::new(Point::new(0, 0), 41)
+        .into_styled(PrimitiveStyle::with_fill(shape_fill))
+        .draw(display)
+        .unwrap();
+
+    Rectangle::new(Point::new(20, 20), Size::new(80, 60))
+        .into_styled(PrimitiveStyle::with_fill(shape_fill))
+        .draw(display)
+        .unwrap();
+
+    // Can also be written in the shorter form: TextStyle::new(&FONT_6X9, Rgb565::WHITE)
+    let no_background = MonoTextStyleBuilder::new()
+        .font(&FONT_6X9)
+        .text_color(Gray8::new(255))
+        .build();
+
+    let filled_background = MonoTextStyleBuilder::new()
+        .font(&FONT_6X9)
+        .text_color(text)
+        .background_color(background)
+        .build();
+
+    let inverse_background = MonoTextStyleBuilder::new()
+        .font(&FONT_6X9)
+        .text_color(background)
+        .background_color(text)
+        .build();
+
+    Text::new(
+        "Hello world! - no background",
+        Point::new(15, 15),
+        no_background,
+    )
+    .draw(display)
+    .unwrap();
+
+    Text::new(
+        "Hello world! - filled background",
+        Point::new(15, 30),
+        filled_background,
+    )
+    .draw(display)
+    .unwrap();
+
+    Text::new(
+        "Hello world! - inverse background",
+        Point::new(15, 45),
+        inverse_background,
+    )
+    .draw(display)
+    .unwrap();
 }
 
 #[allow(non_snake_case)]

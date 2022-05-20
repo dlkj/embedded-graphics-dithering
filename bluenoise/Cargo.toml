@@ -1,0 +1,11 @@
+[package]
+authors = ["DLKJ"]
+edition = "2021"
+name = "bluenoise"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies]
+bluenoise = "0.2"
+rand = { version = "0.8", features = ["small_rng"] }
+rand_pcg = "0.3"
